@@ -12,6 +12,10 @@ import { buildUrlForStateParams } from '../state/fragment-state.ts';
 import { getBlankProjectState, defaultSourcePath } from '../state/initial-state.ts';
 import { ModelContext, FSContext } from './contexts.ts';
 import FilePicker, {  } from './FilePicker.tsx';
+import { GeminiService, Message } from '../services/GeminiService.ts';
+import { Dialog } from 'primereact/dialog';
+import { InputText } from 'primereact/inputtext';
+import { confirmDialog } from 'primereact/confirmdialog';
 
 // const isMonacoSupported = false;
 const isMonacoSupported = (() => {
@@ -35,6 +39,11 @@ export default function EditorPanel({className, style}: {className?: string, sty
   const state = model.state;
 
   const [editor, setEditor] = useState(null as monaco.editor.IStandaloneCodeEditor | null)
+  const [aiChatVisible, setAiChatVisible] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [apiKeyDialogVisible, setApiKeyDialogVisible] = useState(false)
+  const [tempApiKey, setTempApiKey] = useState('')
 
   if (editor) {
     const checkerRun = state.lastCheckerRun;
@@ -44,6 +53,57 @@ export default function EditorPanel({className, style}: {className?: string, sty
         monacoInstance.editor.setModelMarkers(editorModel, 'openscad', checkerRun.markers);
       }
     }
+  }
+
+  const handleAiRequest = async () => {
+    if (!aiPrompt.trim()) return
+
+    const apiKey = state.ai?.geminiApiKey
+    if (!apiKey) {
+      setApiKeyDialogVisible(true)
+      return
+    }
+
+    setAiLoading(true)
+    try {
+      const gemini = new GeminiService(apiKey)
+      const history: Message[] = state.ai?.conversationHistory || []
+      const response = await gemini.generateOpenSCAD(aiPrompt, model.source, history)
+
+      confirmDialog({
+        message: `${response.explanation}\n\nApply this code to the editor?`,
+        header: 'AI Generated Code',
+        icon: 'pi pi-sparkles',
+        accept: () => {
+          model.source = response.code
+          model.mutate(s => {
+            if (!s.ai) s.ai = {}
+            if (!s.ai.conversationHistory) s.ai.conversationHistory = []
+            s.ai.conversationHistory.push(
+              { role: 'user', content: aiPrompt },
+              { role: 'assistant', content: response.explanation, code: response.code }
+            )
+          })
+        },
+        acceptLabel: 'Apply Code',
+        rejectLabel: 'Cancel'
+      })
+
+      setAiPrompt('')
+    } catch (error) {
+      alert(`AI Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const saveApiKey = () => {
+    model.mutate(s => {
+      if (!s.ai) s.ai = {}
+      s.ai.geminiApiKey = tempApiKey
+    })
+    setApiKeyDialogVisible(false)
+    setTempApiKey('')
   }
 
   const onMount = (editor: monaco.editor.IStandaloneCodeEditor) => {
@@ -156,6 +216,14 @@ export default function EditorPanel({className, style}: {className?: string, sty
           onClick={() => model.openFile(defaultSourcePath)} 
           title={`Go back to ${defaultSourcePath}`}/>}
 
+        <Button 
+          icon="pi pi-sparkles" 
+          text
+          rounded
+          onClick={() => setAiChatVisible(!aiChatVisible)} 
+          title="AI Assistant"
+          className={aiChatVisible ? 'p-button-info' : ''} />
+
       </div>
 
       
@@ -196,6 +264,74 @@ export default function EditorPanel({className, style}: {className?: string, sty
           <pre key={i}>{text}</pre>
         ))}
       </div>
+
+      {aiChatVisible && (
+        <div style={{
+          borderTop: '1px solid var(--surface-border)',
+          padding: '10px',
+          display: 'flex',
+          gap: '8px',
+          alignItems: 'center',
+          backgroundColor: 'var(--surface-card)'
+        }}>
+          <InputText
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !aiLoading && handleAiRequest()}
+            placeholder="Ask AI to generate or modify OpenSCAD code..."
+            disabled={aiLoading}
+            style={{ flex: 1 }}
+          />
+          <Button
+            icon="pi pi-send"
+            onClick={handleAiRequest}
+            disabled={aiLoading || !aiPrompt.trim()}
+            loading={aiLoading}
+            label="Send"
+          />
+          {!state.ai?.geminiApiKey && (
+            <Button
+              icon="pi pi-key"
+              onClick={() => setApiKeyDialogVisible(true)}
+              label="Set API Key"
+              severity="warning"
+              outlined
+            />
+          )}
+        </div>
+      )}
+
+      <Dialog
+        header="Configure Gemini API Key"
+        visible={apiKeyDialogVisible}
+        style={{ width: '450px' }}
+        onHide={() => setApiKeyDialogVisible(false)}
+        footer={
+          <div>
+            <Button label="Cancel" icon="pi pi-times" onClick={() => setApiKeyDialogVisible(false)} text />
+            <Button label="Save" icon="pi pi-check" onClick={saveApiKey} disabled={!tempApiKey.trim()} />
+          </div>
+        }
+      >
+        <div className="flex flex-column gap-3">
+          <p style={{ marginTop: 0 }}>
+            Enter your Google Gemini API key. Get one at{' '}
+            <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer">
+              Google AI Studio
+            </a>
+          </p>
+          <InputText
+            value={tempApiKey}
+            onChange={(e) => setTempApiKey(e.target.value)}
+            placeholder="Enter API key..."
+            type="password"
+            style={{ width: '100%' }}
+          />
+          <small style={{ color: 'var(--text-color-secondary)' }}>
+            Your API key is stored locally in your browser.
+          </small>
+        </div>
+      </Dialog>
     
     </div>
   )
