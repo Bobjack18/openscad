@@ -56,6 +56,16 @@ export interface State {
     color: string,
     showAxes?: boolean,
     lineNumbers?: boolean,
+    aiChatVisible?: boolean,
+  }
+
+  ai?: {
+    geminiApiKey?: string,
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant',
+      content: string,
+      code?: string
+    }>
   }
 
   currentRunLogs?: ['stderr'|'stdout', string][],
